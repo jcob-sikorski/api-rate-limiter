@@ -1,0 +1,7 @@
+domain: auth
+descriptors:
+  - key: auth_type
+    value: login
+    rate_limit:
+      unit: minute
+      requests_per_unit: 5

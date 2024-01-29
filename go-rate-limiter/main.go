@@ -10,16 +10,37 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/spf13/viper"
 )
 
-var ctx = context.Background()
-
-var redisClient *redis.Client
+var (
+	ctx             = context.Background()
+	domain          string
+	descriptors     []interface{}
+	unit            string
+	requestsPerUnit int
+	redisClient     *redis.Client
+)
 
 func init() {
+	// Load configuration from file
+	viper.SetConfigFile("config.yaml")
+	if err := viper.ReadInConfig(); err != nil {
+		fmt.Printf("Failed to read configuration: %v\n", err)
+		return
+	}
+
+	// Access configuration values and assign to global variables
+	domain = viper.GetString("domain")
+	descriptors = viper.Get("descriptors").([]interface{})
+
+	rateLimit := descriptors[0].(map[string]interface{})["rate_limit"].(map[string]interface{})
+	unit = rateLimit["unit"].(string)
+	requestsPerUnit = int(rateLimit["requests_per_unit"].(int))
+
 	// Initialize Redis client
 	redisClient = redis.NewClient(&redis.Options{
-		Addr: "localhost:6379", // Update with your Redis server address
+		Addr: viper.GetString("redis.address"),
 	})
 
 	// Test the connection
@@ -75,7 +96,8 @@ func incrementAndCheckLimit(uid string) (bool, error) {
 
 	// If the key is not found, set it to 0 with expiration 60 seconds
 	if err == redis.Nil {
-		err = redisClient.Set(ctx, uid, 0, time.Minute).Err()
+		expiration := getExpirationDuration()
+		err = redisClient.Set(ctx, uid, 0, expiration).Err()
 		if err != nil {
 			return false, err
 		}
@@ -89,14 +111,15 @@ func incrementAndCheckLimit(uid string) (bool, error) {
 	}
 
 	// Check the limit
-	if count < 1000 {
+	if count < requestsPerUnit {
 		// Increment calls and set expiration to 60 seconds
 		_, err := redisClient.Incr(ctx, uid).Result()
 		if err != nil {
 			return false, err
 		}
 
-		_, err = redisClient.Expire(ctx, uid, time.Minute).Result()
+		expiration := getExpirationDuration()
+		_, err = redisClient.Expire(ctx, uid, expiration).Result()
 		if err != nil {
 			return false, err
 		}
@@ -105,4 +128,16 @@ func incrementAndCheckLimit(uid string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+func getExpirationDuration() time.Duration {
+	// Access global variables like unit here
+	switch unit {
+	case "second":
+		return time.Second
+	case "hour":
+		return time.Hour
+	default:
+		return time.Minute
+	}
 }
