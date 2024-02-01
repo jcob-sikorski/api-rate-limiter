@@ -35,11 +35,25 @@ function connectWithRetry() {
 
                 console.log(" [*] Waiting for messages in %s. To exit press CTRL+C", queue);
 
+                // **   competing consumers pattern   **
+
+                // don’t dispatch a new message to a worker until 
+                // it has processed and acknowledged the previous one
+                channel.prefetch(1);
+
                 // Consume messages from the queue
                 channel.consume(queue, function(msg) {
                     console.log(" [x] Received %s", msg.content.toString());
+                
+                    // simulate processing the task for random period of time
+                    let processing_time = Math.random() * 0.01;
+                    console.log(`Received: ${msg.content.toString()}, will take ${processing_time} seconds to process`);
+                    setTimeout(() => {
+                        channel.ack(msg);
+                        console.log('Message processed');
+                    }, processing_time * 1000);
                 }, {
-                    noAck: true
+                    noAck: false
                 });
             });
         });
