@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path"
 	"strconv"
 	"time"
 
@@ -40,7 +41,7 @@ func init() {
 
 	// Initialize Redis client
 	redisClient = redis.NewClient(&redis.Options{
-		Addr: viper.GetString("redis.address"),
+		Addr: "redis:6379",
 	})
 
 	// Test the connection
@@ -55,7 +56,7 @@ func init() {
 
 func rateLimiterMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		uid := r.URL.Query().Get("uid")
+		_, uid := path.Split(r.URL.Path)
 
 		if uid == "" {
 			http.Error(w, "Missing uid parameter", http.StatusBadRequest)
@@ -74,17 +75,17 @@ func rateLimiterMiddleware(next http.Handler) http.Handler {
 		// Forward the request to the API on port 3000
 		proxy := httputil.NewSingleHostReverseProxy(&url.URL{
 			Scheme: "http",
-			Host:   "localhost:3000",
-			Path:   "/api/",
+			Host:   "express-api:3000",
 		})
+
 		proxy.ServeHTTP(w, r)
 	})
 }
 
 func main() {
 	http.Handle("/", rateLimiterMiddleware(nil))
-	fmt.Println("Go Rate Limiter Server is running on port 3001")
-	http.ListenAndServe(":3001", nil)
+	fmt.Println("Go Rate Limiter Server is running on port 8080")
+	http.ListenAndServe(":8080", nil)
 }
 
 func incrementAndCheckLimit(uid string) (bool, error) {

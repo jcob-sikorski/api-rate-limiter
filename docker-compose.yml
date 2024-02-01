@@ -1,0 +1,42 @@
+version: '3'
+services:
+  express-api:
+    build:
+      context: express-api
+      dockerfile: Dockerfile
+    networks:
+      - api-rate-limiter
+
+  redis:
+    image: redis:7.0.15-alpine
+    volumes:
+      - redis:/data
+    networks:
+      - api-rate-limiter
+
+  go-rate-limiter:
+    depends_on:
+      - redis
+    build:
+      context: go-rate-limiter
+      dockerfile: Dockerfile
+    networks:
+      - api-rate-limiter
+
+  nginx-config:
+    depends_on:
+      - express-api
+      - go-rate-limiter
+    build:
+      context: nginx-config
+      dockerfile: Dockerfile
+    networks:
+      - api-rate-limiter
+    ports:
+      - "80:80"
+
+networks:
+  api-rate-limiter:
+
+volumes:
+  redis:
