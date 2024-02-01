@@ -3,15 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"path"
 	"strconv"
 	"time"
 
 	"github.com/go-redis/redis/v8"
 	"github.com/spf13/viper"
+	"github.com/streadway/amqp"
 )
 
 var (
@@ -57,28 +57,77 @@ func init() {
 func rateLimiterMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, uid := path.Split(r.URL.Path)
+		log.Printf("Received request with uid: %s", uid)
 
 		if uid == "" {
+			log.Println("Missing uid parameter")
 			http.Error(w, "Missing uid parameter", http.StatusBadRequest)
 			return
 		}
 
 		// Increment calls in a minute and check the limit
 		if withinLimit, err := incrementAndCheckLimit(uid); err != nil {
+			log.Printf("Error in incrementAndCheckLimit for uid %s: %v", uid, err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		} else if !withinLimit {
+			log.Printf("Rate limit exceeded for uid %s", uid)
 			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
 
-		// Forward the request to the API on port 3000
-		proxy := httputil.NewSingleHostReverseProxy(&url.URL{
-			Scheme: "http",
-			Host:   "express-api:3000",
-		})
+		log.Println("Connecting to RabbitMQ server...")
+		// Connect to RabbitMQ server
+		conn, err := amqp.Dial("amqp://guest:guest@rabbitmq:5672/")
+		if err != nil {
+			log.Printf("Failed to connect to RabbitMQ: %v", err)
+			http.Error(w, "Failed to connect to RabbitMQ", http.StatusInternalServerError)
+			return
+		}
+		defer conn.Close()
 
-		proxy.ServeHTTP(w, r)
+		log.Println("Creating a channel...")
+		// Create a channel
+		ch, err := conn.Channel()
+		if err != nil {
+			log.Printf("Failed to open a channel: %v", err)
+			http.Error(w, "Failed to open a channel", http.StatusInternalServerError)
+			return
+		}
+		defer ch.Close()
+
+		log.Println("Declaring a queue...")
+		// Declare a queue
+		q, err := ch.QueueDeclare(
+			"direct_queue", // name
+			false,          // durable
+			false,          // delete when unused
+			false,          // exclusive
+			false,          // no-wait
+			nil,            // arguments
+		)
+		if err != nil {
+			log.Printf("Failed to declare a queue: %v", err)
+			http.Error(w, "Failed to declare a queue", http.StatusInternalServerError)
+			return
+		}
+
+		log.Println("Publishing a message...")
+		// Publish a message
+		err = ch.Publish(
+			"",     // exchange
+			q.Name, // routing key
+			false,  // mandatory
+			false,  // immediate
+			amqp.Publishing{
+				ContentType: "text/plain",
+				Body:        []byte(uid),
+			})
+		if err != nil {
+			log.Printf("Failed to publish a message: %v", err)
+			http.Error(w, "Failed to publish a message", http.StatusInternalServerError)
+			return
+		}
 	})
 }
 
@@ -92,6 +141,7 @@ func incrementAndCheckLimit(uid string) (bool, error) {
 	// Get the current calls count
 	currentCalls, err := redisClient.Get(ctx, uid).Result()
 	if err != nil && err != redis.Nil {
+		log.Printf("Error getting current calls count for uid %s: %v", uid, err)
 		return false, err
 	}
 
@@ -100,6 +150,7 @@ func incrementAndCheckLimit(uid string) (bool, error) {
 		expiration := getExpirationDuration()
 		err = redisClient.Set(ctx, uid, 0, expiration).Err()
 		if err != nil {
+			log.Printf("Error setting calls count for uid %s: %v", uid, err)
 			return false, err
 		}
 		currentCalls = "0"
@@ -108,6 +159,7 @@ func incrementAndCheckLimit(uid string) (bool, error) {
 	// Parse the current calls count
 	count, err := strconv.Atoi(currentCalls)
 	if err != nil && err != redis.Nil {
+		log.Printf("Error parsing current calls count for uid %s: %v", uid, err)
 		return false, err
 	}
 
@@ -116,18 +168,22 @@ func incrementAndCheckLimit(uid string) (bool, error) {
 		// Increment calls and set expiration to 60 seconds
 		_, err := redisClient.Incr(ctx, uid).Result()
 		if err != nil {
+			log.Printf("Error incrementing calls count for uid %s: %v", uid, err)
 			return false, err
 		}
 
 		expiration := getExpirationDuration()
 		_, err = redisClient.Expire(ctx, uid, expiration).Result()
 		if err != nil {
+			log.Printf("Error setting expiration for uid %s: %v", uid, err)
 			return false, err
 		}
 
+		log.Printf("Incremented calls count for uid %s, new count is less than limit", uid)
 		return true, nil
 	}
 
+	log.Printf("Calls count for uid %s has reached the limit", uid)
 	return false, nil
 }
 

@@ -1,6 +1,25 @@
 version: '3'
 services:
+  # rabbitmq:
+  #   image: rabbitmq:3.12.12-alpine
+  #   networks:
+  #     - api-rate-limiter
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: 'rabbitmq'
+    ports:
+        - 15672:15672
+    volumes:
+        - ~/.docker-conf/rabbitmq/data/:/var/lib/rabbitmq/
+        - ~/.docker-conf/rabbitmq/log/:/var/log/rabbitmq
+    networks:
+        - api-rate-limiter
+
   express-api:
+    container_name: 'express-api'
+    depends_on:
+      - rabbitmq
     build:
       context: express-api
       dockerfile: Dockerfile
@@ -8,6 +27,7 @@ services:
       - api-rate-limiter
 
   redis:
+    container_name: 'redis'
     image: redis:7.0.15-alpine
     volumes:
       - redis:/data
@@ -15,8 +35,10 @@ services:
       - api-rate-limiter
 
   go-rate-limiter:
+    container_name: 'go-rate-limiter'
     depends_on:
       - redis
+      - rabbitmq
     build:
       context: go-rate-limiter
       dockerfile: Dockerfile
@@ -24,6 +46,7 @@ services:
       - api-rate-limiter
 
   nginx-config:
+    container_name: 'nginx-config'
     depends_on:
       - express-api
       - go-rate-limiter
