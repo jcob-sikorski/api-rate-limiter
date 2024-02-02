@@ -46,7 +46,8 @@ Clients can determine if they are being throttled and the remaining allowed requ
 
 ## Detailed Design
 
-Rules are stored on disk, and workers pull them into cache. The rate limiter middleware, upon receiving a request, loads rules from the cache and fetches counters and last request timestamps from Redis cache. Based on this information, the rate limiter decides whether to forward the request to API servers or return a 429 Too Many Requests error to the client. Workers enable parallel and concurrent processing, ensuring scalability.
+Rules are stored on disk, and workers pull them into cache. The rate<img width="1210" alt="Screenshot 2024-02-02 at 9 32 24 AM" src="https://github.com/jcob-sikorski/api-rate-limiter/assets/45105669/cd76adcc-e1d0-43c9-9b2e-9a25b7fe998c">
+ limiter middleware, upon receiving a request, loads rules from the cache and fetches counters and last request timestamps from Redis cache. Based on this information, the rate limiter decides whether to forward the request to API servers or return a 429 Too Many Requests error to the client. Workers enable parallel and concurrent processing, ensuring scalability.
 
 ## Rate Limiter in a Distributed Environment
 
