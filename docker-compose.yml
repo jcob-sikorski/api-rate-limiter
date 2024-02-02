@@ -41,6 +41,8 @@ services:
     build:
       context: go-rate-limiter
       dockerfile: Dockerfile
+    volumes:
+      - go_rate_limiter_config:/config
     networks:
       - api-rate-limiter
 
@@ -62,3 +64,5 @@ networks:
 
 volumes:
   redis:
+  go_rate_limiter_config:
+    external: true

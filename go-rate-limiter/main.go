@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"path"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -21,24 +24,10 @@ var (
 	unit            string
 	requestsPerUnit int
 	redisClient     *redis.Client
+	mu              sync.Mutex
 )
 
 func init() {
-	// Load configuration from file
-	viper.SetConfigFile("config.yaml")
-	if err := viper.ReadInConfig(); err != nil {
-		fmt.Printf("Failed to read configuration: %v\n", err)
-		return
-	}
-
-	// Access configuration values and assign to global variables
-	domain = viper.GetString("domain")
-	descriptors = viper.Get("descriptors").([]interface{})
-
-	rateLimit := descriptors[0].(map[string]interface{})["rate_limit"].(map[string]interface{})
-	unit = rateLimit["unit"].(string)
-	requestsPerUnit = int(rateLimit["requests_per_unit"].(int))
-
 	// Initialize Redis client
 	redisClient = redis.NewClient(&redis.Options{
 		Addr: "redis:6379",
@@ -52,6 +41,56 @@ func init() {
 	}
 
 	fmt.Println("Connected to Redis")
+
+	// Load configuration from file
+	refreshConfig()
+
+	// Start a goroutine that refreshes the configuration every minute
+	go func() {
+		for {
+			time.Sleep(500 * time.Millisecond)
+			refreshConfig()
+		}
+	}()
+}
+
+func refreshConfig() {
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Open the config file
+	file, err := os.Open("/config/config.yaml")
+	if err != nil {
+		log.Printf("Failed to open file: %v\n", err)
+	} else {
+		// Read the file
+		b, err := io.ReadAll(file)
+		if err != nil {
+			log.Printf("Failed to read file: %v\n", err)
+		} else {
+			// Print the contents of the file
+			log.Println("Contents of /config/config.yaml:")
+			log.Println(string(b))
+		}
+
+		// Close the file
+		file.Close()
+	}
+
+	// Load configuration from file
+	viper.SetConfigFile("/config/config.yaml")
+	if err := viper.ReadInConfig(); err != nil {
+		fmt.Printf("Failed to read configuration: %v\n", err)
+		return
+	}
+
+	// Access configuration values and assign to global variables
+	domain = viper.GetString("domain")
+	descriptors = viper.Get("descriptors").([]interface{})
+
+	rateLimit := descriptors[0].(map[string]interface{})["rate_limit"].(map[string]interface{})
+	unit = rateLimit["unit"].(string)
+	requestsPerUnit = int(rateLimit["requests_per_unit"].(int))
 }
 
 func rateLimiterMiddleware(next http.Handler) http.Handler {
@@ -138,6 +177,11 @@ func main() {
 }
 
 func incrementAndCheckLimit(uid string) (bool, error) {
+	mu.Lock()
+	localUnit := unit
+	localRequestsPerUnit := requestsPerUnit
+	mu.Unlock()
+
 	// Get the current calls count
 	currentCalls, err := redisClient.Get(ctx, uid).Result()
 	if err != nil && err != redis.Nil {
@@ -147,7 +191,7 @@ func incrementAndCheckLimit(uid string) (bool, error) {
 
 	// If the key is not found, set it to 0 with expiration 60 seconds
 	if err == redis.Nil {
-		expiration := getExpirationDuration()
+		expiration := getExpirationDuration(localUnit)
 		err = redisClient.Set(ctx, uid, 0, expiration).Err()
 		if err != nil {
 			log.Printf("Error setting calls count for uid %s: %v", uid, err)
@@ -164,7 +208,7 @@ func incrementAndCheckLimit(uid string) (bool, error) {
 	}
 
 	// Check the limit
-	if count < requestsPerUnit {
+	if count < localRequestsPerUnit {
 		// Increment calls and set expiration to 60 seconds
 		_, err := redisClient.Incr(ctx, uid).Result()
 		if err != nil {
@@ -172,7 +216,7 @@ func incrementAndCheckLimit(uid string) (bool, error) {
 			return false, err
 		}
 
-		expiration := getExpirationDuration()
+		expiration := getExpirationDuration(localUnit)
 		_, err = redisClient.Expire(ctx, uid, expiration).Result()
 		if err != nil {
 			log.Printf("Error setting expiration for uid %s: %v", uid, err)
@@ -187,8 +231,7 @@ func incrementAndCheckLimit(uid string) (bool, error) {
 	return false, nil
 }
 
-func getExpirationDuration() time.Duration {
-	// Access global variables like unit here
+func getExpirationDuration(unit string) time.Duration {
 	switch unit {
 	case "second":
 		return time.Second

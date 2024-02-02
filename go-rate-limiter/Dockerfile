@@ -38,8 +38,6 @@ COPY --from=build-production /etc/passwd /etc/passwd
 # Copy the app binary from the build stage
 COPY --from=build-production /app/middleware-golang middleware-golang
 
-COPY --from=build-production /app/config.yaml config.yaml
-
 # Use nonroot user
 USER nonroot
 
