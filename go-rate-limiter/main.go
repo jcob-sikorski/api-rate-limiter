@@ -1,12 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"os"
 	"path"
 	"strconv"
 	"sync"
@@ -48,7 +47,7 @@ func init() {
 	// Start a goroutine that refreshes the configuration every minute
 	go func() {
 		for {
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(60000 * time.Millisecond)
 			refreshConfig()
 		}
 	}()
@@ -58,28 +57,16 @@ func refreshConfig() {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// Open the config file
-	file, err := os.Open("/config/config.yaml")
+	// Get the configuration from Redis
+	config, err := redisClient.Get(ctx, "config").Result()
 	if err != nil {
-		log.Printf("Failed to open file: %v\n", err)
-	} else {
-		// Read the file
-		b, err := io.ReadAll(file)
-		if err != nil {
-			log.Printf("Failed to read file: %v\n", err)
-		} else {
-			// Print the contents of the file
-			log.Println("Contents of /config/config.yaml:")
-			log.Println(string(b))
-		}
-
-		// Close the file
-		file.Close()
+		log.Printf("Failed to get config from Redis: %v\n", err)
+		return
 	}
 
-	// Load configuration from file
-	viper.SetConfigFile("/config/config.yaml")
-	if err := viper.ReadInConfig(); err != nil {
+	// Load configuration from Redis
+	viper.SetConfigType("yaml")
+	if err := viper.ReadConfig(bytes.NewBufferString(config)); err != nil {
 		fmt.Printf("Failed to read configuration: %v\n", err)
 		return
 	}

@@ -33,16 +33,28 @@ services:
     networks:
       - api-rate-limiter
 
+  worker:
+    container_name: 'worker'
+    depends_on:
+      - redis
+    build:
+      context: worker
+      dockerfile: Dockerfile
+    volumes:
+      - go_rate_limiter_config:/config
+    networks:
+      - api-rate-limiter
+
+
   go-rate-limiter:
     container_name: 'go-rate-limiter'
     depends_on:
       - redis
       - rabbitmq
+      - worker
     build:
       context: go-rate-limiter
       dockerfile: Dockerfile
-    volumes:
-      - go_rate_limiter_config:/config
     networks:
       - api-rate-limiter
 
